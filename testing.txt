@@ -1,0 +1,17 @@
+docker stop $(docker ps -aq)
+docker rm $(docker ps -aq)
+docker rmi -f $(docker images -aq)
+docker system prune -a --volumes -f
+
+
+curl -k -X POST https://localhost:8443/applications/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"applicant_id":"applicant-1","requested_amount":20000,"months_of_statements":6}'
+
+# 1. submit — returns a job_id immediately
+curl -k -s -X POST https://localhost:8443/applications/evaluate/async \
+  -H "Content-Type: application/json" \
+  -d '{"applicant_id":"applicant-1","requested_amount":20000,"months_of_statements":6}'
+
+# 2. poll with it
+curl -k -s https://localhost:8443/applications/evaluate/async/PASTE_JOB_ID_HERE

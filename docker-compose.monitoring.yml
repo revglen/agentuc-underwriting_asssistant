@@ -1,0 +1,57 @@
+services:
+  mcp-servers:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    ports:
+      - "${CREDIT_BUREAU_MCP_PORT:-9001}:9001"
+      - "${CREDIT_BUREAU_METRICS_PORT:-8001}:8001"
+      - "${BANK_STATEMENT_PARSER_MCP_PORT:-9002}:9002"
+      - "${BANK_STATEMENT_PARSER_METRICS_PORT:-8002}:8002"
+      - "${POLICY_RULES_ENGINE_MCP_PORT:-9003}:9003"
+      - "${POLICY_RULES_ENGINE_METRICS_PORT:-8003}:8003"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    depends_on:
+      - mcp-servers
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - CREDIT_BUREAU_MCP_HOST=mcp-servers
+      - BANK_STATEMENT_PARSER_MCP_HOST=mcp-servers
+      - POLICY_RULES_ENGINE_MCP_HOST=mcp-servers
+    ports:
+      - "${API_PORT:-8443}:8443"
+    volumes:
+      - ./certs:/app/certs:ro
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-data:

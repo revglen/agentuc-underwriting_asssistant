@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MCP: credit_bureau",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "mcp_servers.credit_bureau.server",
+      "cwd": "${workspaceFolder}/src",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" },
+      "justMyCode": false
+    },
+    {
+      "name": "MCP: bank_statement_parser",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "mcp_servers.bank_statement_parser.server",
+      "cwd": "${workspaceFolder}/src",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" },
+      "justMyCode": false
+    },
+    {
+      "name": "MCP: policy_rules_engine",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "mcp_servers.policy_rules_engine.server",
+      "cwd": "${workspaceFolder}/src",
+      "env": { "PYTHONPATH": "${workspaceFolder}/src" },
+      "justMyCode": false
+    }
+  ],
+  "compounds": [
+    {
+      "name": "MCP: all three",
+      "configurations": ["MCP: credit_bureau", "MCP: bank_statement_parser", "MCP: policy_rules_engine"]
+    }
+  ]
+}
