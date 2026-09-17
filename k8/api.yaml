@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: api
+          image: underwriting-assistant-api:latest
+          imagePullPolicy: Never
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://host.minikube.internal:11434"
+            - name: CREDIT_BUREAU_MCP_HOST
+              value: "mcp-servers"
+            - name: BANK_STATEMENT_PARSER_MCP_HOST
+              value: "mcp-servers"
+            - name: POLICY_RULES_ENGINE_MCP_HOST
+              value: "mcp-servers"
+          ports:
+            - containerPort: 8443
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /app/certs
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8443
+              scheme: HTTPS
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: underwriting-tls-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: underwriting-api
+spec:
+  selector:
+    app: api
+  type: NodePort
+  ports:
+    - port: 8443
+      targetPort: 8443

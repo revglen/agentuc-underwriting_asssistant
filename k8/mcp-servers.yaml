@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-servers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-servers
+  template:
+    metadata:
+      labels:
+        app: mcp-servers
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: mcp-servers
+          image: underwriting-assistant-mcp-servers:latest
+          imagePullPolicy: Never
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://host.minikube.internal:11434"
+          ports:
+            - containerPort: 9001
+            - containerPort: 9002
+            - containerPort: 9003
+            - containerPort: 8001
+            - containerPort: 8002
+            - containerPort: 8003
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-servers
+spec:
+  selector:
+    app: mcp-servers
+  type: NodePort
+  ports:
+    - name: credit-bureau-mcp
+      port: 9001
+      targetPort: 9001
+    - name: bank-statement-mcp
+      port: 9002
+      targetPort: 9002
+    - name: policy-rules-mcp
+      port: 9003
+      targetPort: 9003
+    - name: credit-bureau-metrics
+      port: 8001
+      targetPort: 8001
+    - name: bank-statement-metrics
+      port: 8002
+      targetPort: 8002
+    - name: policy-rules-metrics
+      port: 8003
+      targetPort: 8003
