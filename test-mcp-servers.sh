@@ -7,7 +7,7 @@ PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9090}"
 READY_TIMEOUT="${READY_TIMEOUT:-60}"
 
 echo "==> starting mcp-servers, prometheus, grafana"
-docker compose -f ./docker-compose.monitoring.yml up -d --build mcp-servers api prometheus grafana
+docker compose -f ./docker-compose.monitoring.yml up -d --build mcp-servers api ui prometheus grafana
 
 wait_for_port() {
     local port="$1" name="$2"

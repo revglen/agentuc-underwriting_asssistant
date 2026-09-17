@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: ui
+          image: underwriting-assistant-ui:latest
+          imagePullPolicy: Never
+          env:
+            - name: API_BASE_URL
+              value: "https://underwriting-api:8443"
+          ports:
+            - containerPort: 8501
+          readinessProbe:
+            tcpSocket:
+              port: 8501
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8501
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+spec:
+  selector:
+    app: ui
+  type: NodePort
+  ports:
+    - port: 8501
+      targetPort: 8501

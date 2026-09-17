@@ -24,7 +24,7 @@ Orchestrator (src/agents, deepagents/LangGraph)
   `-- policy_rules_engine subagent    --MCP--> policy_rules_engine server (9003)
 ```
 
-The orchestrator is a `deepagents` deep agent (`create_deep_agent`) built once at API startup (see `api_main.py`'s lifespan) and reused across requests. It has three subagents, each scoped only to its own MCP server's tools via `langchain-mcp-adapters`. The main agent must call the credit bureau and bank statement subagents first, then pass their real figures to the policy subagent, then finish by calling a structured-output tool (`ApplicationDecision`) — it's instructed never to write the decision as free text.
+The orchestrator is a `deepagents` deep agent (`create_deep_agent`) built once at API startup (see `api_main.py`'s lifespan) and reused across requests. It has three subagents, each scoped only to its own MCP server's tools via `langchain-mcp-adapters`. The main agent must call the credit bureau and bank statement subagents first, then pass their real figures to the policy subagent, then finish by calling a structured-output tool (`ApplicationDecision`) — it's instructed never to write the decision as free text. If it finishes a turn without calling that tool (a known reliability gap on smaller/local models under multi-turn tool orchestration), the API retries once with an explicit nudge before giving up.
 
 Each MCP server tool (`get_credit_score`, `parse_bank_statement`, `evaluate_policy`, etc.) calls an LLM with a Pydantic response model to generate plausible, internally consistent synthetic figures, then runs the result through a guardrail check (`src/guardrails/checks.py`) before returning it.
 
@@ -39,8 +39,12 @@ src/
   errors/         Custom exceptions + FastAPI exception handlers
   guardrails/     Sanity checks on LLM-generated figures/decisions
   observability/  Prometheus metrics decorator
-  script/         Ad-hoc manual test scripts (agent, MCP client, Prometheus)
+  script/         Manual test scripts:
+                    mcp_client_test.py  - call one tool on one MCP server
+                    mcp_smoke_test.py   - discover + call every tool on one MCP server
+                    agent_test.py       - run the orchestrator directly, bypassing FastAPI
 docker/           Per-image pinned requirements + MCP container entrypoint
+k8s/              Kubernetes manifests (Deployments + Services + ConfigMap) for Minikube
 monitoring/       Prometheus scrape config
 certs/            Local dev TLS cert/key (generated, not committed)
 ```
@@ -50,6 +54,7 @@ certs/            Local dev TLS cert/key (generated, not committed)
 - Python 3.12, [uv](https://github.com/astral-sh/uv)
 - A local [Ollama](https://ollama.com) instance (default provider) or a Groq/Google API key
 - Docker + Docker Compose, if running the containerized stack
+- kubectl + Minikube, if deploying to Kubernetes
 
 ## Configuration
 
@@ -59,7 +64,7 @@ Settings are loaded from environment variables / a `.env` file (see `src/config/
 |---|---|---|
 | `PROVIDER` | `ollama` | LLM backend: `ollama`, `groq`, or `google` |
 | `MODEL_NAME` | `qwen2.5:7b` | Model name for the chosen provider |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Only used when `PROVIDER=ollama` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Only used when `PROVIDER=ollama`. Override to `http://host.docker.internal:11434` in Docker Compose, `http://host.minikube.internal:11434` on Minikube |
 | `GROQ_API_KEY` / `GOOGLE_API_KEY` | — | Required if using those providers |
 | `LANGCHAIN_API_KEY`, `LANGCHAIN_PROJECT`, `LANGCHAIN_ENDPOINT` | — | LangSmith tracing (`tracing_enabled` defaults to `true`) |
 | `TLS_ENABLED` | `true` | Serve the API over HTTPS using `certs/dev-cert.pem`/`dev-key.pem` |
@@ -68,6 +73,8 @@ Settings are loaded from environment variables / a `.env` file (see `src/config/
 | `*_METRICS_PORT` | `8001`-`8003` | Prometheus metrics port per MCP server |
 
 `openai` is present in settings but `langchain-openai` isn't a project dependency yet, so `PROVIDER=openai` isn't supported.
+
+Ollama itself must be bound to more than loopback for any containerized/clustered deployment to reach it — `ss -ltnp | grep 11434` should show `*:11434` or `0.0.0.0:11434`, not `127.0.0.1:11434`. If it doesn't: `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
 ## Running locally (no Docker)
 
@@ -88,6 +95,22 @@ uv run python src/main.py
 
 The API is then at `https://localhost:8443` (self-signed cert — use `curl -k` or disable verification in your client). Swagger docs are at `/docs`.
 
+### Testing without the API
+
+```bash
+# discover + call every tool on one server with fixed test parameters
+PYTHONPATH=src python3 src/script/mcp_smoke_test.py credit_bureau
+PYTHONPATH=src python3 src/script/mcp_smoke_test.py bank_statement_parser
+PYTHONPATH=src python3 src/script/mcp_smoke_test.py policy_rules_engine
+
+# call one specific tool with your own arguments
+PYTHONPATH=src python3 src/script/mcp_client_test.py credit_bureau get_credit_score applicant_id=applicant-1
+
+# run the orchestrator directly, bypassing FastAPI entirely - useful for
+# isolating an agent/LLM problem from an API problem
+PYTHONPATH=src python3 src/script/agent_test.py applicant-1 20000 6
+```
+
 ## Running with Docker Compose
 
 ```bash
@@ -103,10 +126,54 @@ This starts:
 
 Both `api` and `mcp-servers` reach the host's Ollama via `host.docker.internal`. The `certs/` directory is mounted read-only into the `api` container, so generate the dev cert on the host first.
 
+## Running on Kubernetes (Minikube)
+
+```bash
+# start the cluster
+minikube start --driver=docker
+
+# build the images (via Docker Compose, or `docker build` per Dockerfile)
+docker compose -f docker-compose.monitoring.yml build mcp-servers api
+
+# load them into minikube - they're local images, not in a registry
+minikube image load underwriting-assistant-mcp-servers:latest
+minikube image load underwriting-assistant-api:latest
+
+# TLS cert as a Secret
+kubectl create secret generic underwriting-tls-certs \
+  --from-file=dev-cert.pem=./certs/dev-cert.pem \
+  --from-file=dev-key.pem=./certs/dev-key.pem
+
+# deploy, mcp-servers before api
+kubectl apply -f k8s/prometheus-configmap.yaml
+kubectl apply -f k8s/mcp-servers.yaml
+kubectl apply -f k8s/prometheus.yaml
+kubectl apply -f k8s/grafana.yaml
+kubectl apply -f k8s/api.yaml
+
+kubectl get pods -w   # wait for everything to show Running 1/1
+
+# reach the API
+kubectl port-forward service/underwriting-api 8443:8443 &
+curl -k https://localhost:8443/health
+```
+
+Two things worth knowing about the manifests:
+
+- The API's Kubernetes Service is named `underwriting-api`, not `api` — naming it `api` would collide with Kubernetes' auto-injected `API_PORT` environment variable, which clashes with the app's own `API_PORT` setting and crashes every pod in the namespace on import. `enableServiceLinks: false` is also set on both Deployments to prevent this class of collision entirely.
+- `mcp-servers` and `api` both set `OLLAMA_BASE_URL=http://host.minikube.internal:11434` — verify that resolves before debugging anything else: `minikube ssh -- curl -s -o /dev/null -w "%{http_code}\n" http://host.minikube.internal:11434/api/tags`.
+
+Teardown:
+```bash
+kubectl delete -f k8s/api.yaml -f k8s/mcp-servers.yaml -f k8s/prometheus.yaml -f k8s/grafana.yaml -f k8s/prometheus-configmap.yaml
+kubectl delete secret underwriting-tls-certs
+minikube stop        # or `minikube delete` to remove the cluster entirely
+```
+
 ## API
 
 - `POST /applications/evaluate` — synchronous evaluation; blocks until the orchestrator finishes (can take a while on a local model)
-- `POST /applications/evaluate/async` — submits a job, returns a `job_id` immediately
+- `POST /applications/evaluate/async` — submits a job, returns a `job_id` immediately; runs via FastAPI `BackgroundTasks` and an in-memory job store (not durable across restarts, not safe across multiple API replicas without a shared store)
 - `GET /applications/evaluate/async/{job_id}` — poll job status/result
 - `GET /health` — basic liveness check (does not verify the MCP servers are reachable)
 - `/credit-bureau`, `/bank-statements`, `/policy` — direct per-system debug routes over the underlying MCP servers, bypassing the orchestrator
@@ -137,7 +204,8 @@ curl -k -s https://localhost:8443/applications/evaluate/async/PASTE_JOB_ID_HERE
 - No tests committed (`tests/` is a placeholder directory); manual smoke scripts live in `src/script/`
 - No human-in-the-loop approval interrupt yet (the orchestrator runs straight through to a decision)
 - No Kafka/webhook event publishing yet
-- No CI/CD or cloud deployment yet
+- Kubernetes manifests target Minikube only (local, single-node) — no cloud cluster, no CI/CD, no image registry push
+- Async job store is in-memory only — not durable, not multi-replica safe
 
 ## License
 

@@ -33,6 +33,17 @@ services:
     volumes:
       - ./certs:/app/certs:ro
 
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    depends_on:
+      - api
+    environment:
+      - API_BASE_URL=https://api:8443
+    ports:
+      - "${UI_PORT:-8501}:8501"
+
   prometheus:
     image: prom/prometheus:latest
     volumes:
